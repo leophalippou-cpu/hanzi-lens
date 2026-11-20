@@ -1,14 +1,18 @@
 // Service worker : garde une copie de l'app sur le téléphone pour qu'elle marche sans connexion
 // (dehors, devant une enseigne). Changer VERSION à chaque publication pour forcer la mise à jour.
-const VERSION = "hanzi-lens-2026-11-20a";
+const VERSION = "hanzi-lens-2026-11-20b";
 const FILES = [
   "./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png",
   "./hanzi-net.js", "./hanzi-segment.js", "./hanzi-reader.js", "./hanzi-gpu.js", "./hanzi-worker.js", "./hanzi-dict.js",
-  "./models/hanzi.json", "./models/hanzi.bin", "./dict/zh.json",
+  "./hanzi-mt.js", "./hanzi-mt-worker.js",
+  "./models/hanzi.json", "./models/hanzi.bin", "./models/mt.json", "./models/mt.bin", "./dict/zh.json",
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // Fichier par fichier : un fichier absent (ex. traducteur pas encore publié) n'empêche pas le reste.
+  e.waitUntil(caches.open(VERSION)
+    .then((c) => Promise.all(FILES.map((f) => c.add(f).catch(() => {}))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {

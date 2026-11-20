@@ -16,7 +16,7 @@ export function toGray(rgba, n) {
 }
 
 // Renvoie { ink: Float32Array (contraste de l'encre, 0 ailleurs), mask: Uint8Array }.
-function binarize(gray, w, h, invert) {
+export function binarize(gray, w, h, invert) {
   const n = w * h;
   const W1 = w + 1;
   const sum = new Float64Array(W1 * (h + 1)), sq = new Float64Array(W1 * (h + 1));
@@ -49,7 +49,7 @@ function binarize(gray, w, h, invert) {
 }
 
 // Composantes connexes (8-voisinage). Renvoie les étiquettes et la liste des composantes.
-function components(mask, w, h) {
+export function components(mask, w, h) {
   const label = new Int32Array(w * h);
   const parent = [0];
   const find = (a) => { while (parent[a] !== a) a = parent[a] = parent[parent[a]]; return a; };
@@ -90,6 +90,8 @@ function components(mask, w, h) {
 }
 
 const side = (b) => Math.max(b.x1 - b.x0 + 1, b.y1 - b.y0 + 1);
+// Taille « d'un caractère » : une tache très large (caractères qui se touchent) ne compte pas toute sa largeur.
+const sideH = (b) => { const bh = b.y1 - b.y0 + 1; return Math.max(bh, Math.min(b.x1 - b.x0 + 1, 1.3 * bh)); };
 const union = (a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) });
 const gapX = (a, b) => Math.max(0, Math.max(a.x0, b.x0) - Math.min(a.x1, b.x1) - 1);
 const gapY = (a, b) => Math.max(0, Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1) - 1);
@@ -114,8 +116,8 @@ function group(comps, w, h) {
   if (!keep.length) return { S: 0, lines: [] };
 
   // Taille typique d'un caractère : les plus gros morceaux sont souvent des caractères entiers.
-  const big = keep.map(side).filter((s) => s >= minSide * 2);
-  const S0 = Math.max(minSide * 3, percentile(big.length ? big : keep.map(side), 0.85));
+  const big = keep.map(sideH).filter((s) => s >= minSide * 2);
+  const S0 = Math.max(minSide * 3, percentile(big.length ? big : keep.map(sideH), 0.85));
 
   // On ne réunit ici que les morceaux EMPILÉS (même colonne : 三, 字, 是…) ou imbriqués (回, 心…).
   // Les morceaux côte à côte (女 + 子 = 好 ?) sont départagés plus tard par le réseau.
@@ -194,7 +196,8 @@ function group(comps, w, h) {
   const S = Math.min(1.8 * S0, Math.max(S0, percentile(heights, 0.5)));
   const clusters = mergeStacked(S);
   // Les petits morceaux (points, traits courts) restent : ils peuvent appartenir au caractère voisin.
-  const cl = clusters.filter((c) => side(c) >= 0.08 * S && side(c) <= 1.8 * S);
+  // Les taches très larges (caractères collés, texte serré d'un écran) sont gardées : on les coupera.
+  const cl = clusters.filter((c) => side(c) >= 0.08 * S && c.y1 - c.y0 + 1 <= 1.8 * S && c.x1 - c.x0 + 1 <= 8 * S);
 
   // Lignes : on parcourt les grappes de gauche à droite et on les accroche à la ligne alignée.
   cl.sort((a, b) => a.x0 - b.x0);
@@ -240,6 +243,41 @@ function crop(ink, label, w, items) {
   return { box: b, input: normalize(patch, cw, ch) };
 }
 
+// Coupe une tache plus large qu'un caractère (traits de caractères voisins qui se touchent) aux colonnes
+// où il y a le moins d'encre, près des frontières attendues. Les morceaux pourront être réunis par le réseau.
+function splitWide(items, label, w, lh) {
+  const out = [];
+  for (const it of items) {
+    const iw = it.x1 - it.x0 + 1, ih = it.y1 - it.y0 + 1, ref = Math.max(ih, lh * 0.85);
+    if (iw <= 1.35 * ref) { out.push(it); continue; }
+    const k = Math.max(2, Math.round(iw / ref)), ids = new Set(it.ids);
+    const proj = new Float32Array(iw);
+    for (let y = it.y0; y <= it.y1; y++)
+      for (let x = it.x0; x <= it.x1; x++) if (ids.has(label[y * w + x])) proj[x - it.x0]++;
+    const cuts = [];
+    for (let j = 1; j < k; j++) {
+      const target = Math.round((j * iw) / k), win = Math.max(2, Math.round((0.3 * iw) / k));
+      let best = target, bv = Infinity;
+      for (let x = Math.max(1, target - win); x <= Math.min(iw - 2, target + win); x++) {
+        const v = proj[x] + 0.02 * Math.abs(x - target);
+        if (v < bv) { bv = v; best = x; }
+      }
+      cuts.push(best);
+    }
+    let start = 0;
+    for (const cut of [...cuts, iw]) {
+      const xa = it.x0 + start, xb = it.x0 + cut - 1;
+      let ya = Infinity, yb = -Infinity;
+      for (let y = it.y0; y <= it.y1; y++)
+        for (let x = xa; x <= xb; x++)
+          if (ids.has(label[y * w + x])) { if (y < ya) ya = y; yb = y; break; }
+      if (yb >= ya) out.push({ x0: xa, x1: xb, y0: ya, y1: yb, ids: it.ids });
+      start = cut;
+    }
+  }
+  return out;
+}
+
 // Point d'entrée : gray (Float32Array w×h). Renvoie, pour chaque polarité, les lignes et
 // les « candidats » à faire reconnaître (un candidat = 1 à 3 grappes consécutives d'une ligne).
 export function segment(gray, w, h, invert = false) {
@@ -247,10 +285,10 @@ export function segment(gray, w, h, invert = false) {
   const { label, comps } = components(mask, w, h);
   const { S, lines } = group(comps, w, h);
   const out = [];
-  for (const l of lines.slice(0, 12)) {
-    const items = l.items.slice(0, 40);
+  for (const l of lines.slice(0, 16)) {
     // Hauteur de ligne : son étendue verticale, bornée par la taille typique d'un caractère.
     const lh = Math.min(Math.max(l.y1 - l.y0 + 1, S * 0.6), S * 1.3);
+    const items = splitWide(l.items, label, w, lh).slice(0, 60);
     const cands = [];
     for (let i = 0; i < items.length; i++)
       for (let n = 1; n <= 4 && i + n <= items.length; n++) {

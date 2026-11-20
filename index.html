@@ -109,6 +109,9 @@ button, select, input { font: inherit; color: inherit; }
 .alt.on { background: #e3d6b8; }
 .pinyin { margin: 2px 0 0; font-style: italic; color: var(--ink-soft); }
 .tr { margin: 4px 0 0; font-size: 18px; font-weight: 700; }
+.tr.wait { color: var(--ink-soft); font-weight: 400; font-style: italic; }
+.gloss { margin: 4px 0 0; font-size: 15px; color: var(--ink-soft); }
+.gloss span { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
 .seg-actions { margin-top: 6px; }
 .seg-actions button { border: 0; background: none; padding: 0; color: var(--seal); text-decoration: underline; cursor: pointer; font-size: 14px; }
 .vocab { margin: 12px 0 4px; }
@@ -233,7 +236,7 @@ legend { padding: 0; margin-bottom: 6px; font-size: 13px; letter-spacing: .08em;
         <li><b>Calcul :</b> <span id="factBackend">…</span></li>
         <li><b>Caractères :</b> <span id="factChars">…</span></li>
         <li><b>Précision mesurée :</b> <span id="factAcc">…</span></li>
-        <li><b>Traduction :</b> dictionnaire hors ligne, mot à mot.</li>
+        <li><b>Traduction :</b> <span id="factMT">dictionnaire hors ligne, mot à mot.</span></li>
       </ul>
       <p class="help">Données : écriture manuscrite CASIA-HWDB1.1 (Institut d'automatisation de l'Académie chinoise des sciences, usage non commercial ; Liu et al., ICDAR 2011), polices chinoises de Windows, dictionnaires CFDICT (chine.in, CC BY-SA 3.0) et CC-CEDICT (MDBG, CC BY-SA 4.0).</p>
     </fieldset>
@@ -290,6 +293,7 @@ async function loadEngine() {
       : "non mesurée";
     if (!state.shown) renderIntro();
     setStatus("ready", state.stream ? readyMessage() : "Prêt");
+    loadTranslator();
   } catch (err) {
     console.error(err);
     setStatus("error", "Moteur indisponible");
@@ -299,7 +303,52 @@ async function loadEngine() {
   }
 }
 function lineText(line) { return line.chars.map((c) => c.ch).join(""); }
-function lineInfo(line) { return state.dict ? analyze(state.dict, lineText(line)) : { words: [], extras: [], pinyin: "", gloss: "" }; }
+function lineInfo(line) {
+  const info = state.dict ? analyze(state.dict, lineText(line)) : { words: [], extras: [], pinyin: "", gloss: "" };
+  info.sentence = mt.done.get(lineText(line)) || "";
+  return info;
+}
+
+// ------------------------------------------------------------ traducteur neuronal maison
+// Chargé après le lecteur, dans un travailleur à part : il traduit des phrases entières.
+// Tant qu'il n'est pas prêt (ou s'il manque), la traduction mot à mot du dictionnaire reste affichée.
+const mt = { worker: null, ready: false, done: new Map(), pending: new Set(), nextId: 1, jobs: new Map() };
+async function loadTranslator() {
+  try {
+    const [manifest, weights] = await Promise.all([
+      fetch("./models/mt.json").then((r) => { if (!r.ok) throw new Error("absent"); return r.json(); }),
+      fetch("./models/mt.bin").then((r) => { if (!r.ok) throw new Error("absent"); return r.arrayBuffer(); }),
+    ]);
+    const w = new Worker(new URL("./hanzi-mt-worker.js", import.meta.url), { type: "module" });
+    await new Promise((resolve, reject) => {
+      w.onerror = (e) => reject(new Error(e.message || "travailleur"));
+      w.onmessage = (e) => { if (e.data.type === "ready") resolve(); };
+      w.postMessage({ type: "init", manifest, weights }, [weights]);
+    });
+    w.onmessage = (e) => {
+      const { id, text } = e.data;
+      const src = mt.jobs.get(id);
+      mt.jobs.delete(id);
+      mt.pending.delete(src);
+      if (src == null) return;
+      mt.done.set(src, text);
+      if (state.shown && state.shown.lines.some((l) => lineText(l) === src)) renderResult(state.shown);
+      if (live.last && live.last.lines.some((l) => lineText(l) === src) && live.boxes) drawOverlay(live.last.frame, live.last.lines);
+    };
+    Object.assign(mt, { worker: w, ready: true });
+    $("#factMT").textContent = "phrase entière par notre traducteur neuronal, avec le mot à mot du dictionnaire pour vérifier.";
+    if (state.shown) renderResult(state.shown);
+  } catch (err) {
+    console.info("Traducteur neuronal indisponible :", err.message);
+  }
+}
+function requestTranslation(text) {
+  if (!mt.ready || !text || mt.done.has(text) || mt.pending.has(text)) return;
+  const id = mt.nextId++;
+  mt.jobs.set(id, text);
+  mt.pending.add(text);
+  mt.worker.postMessage({ type: "translate", id, text });
+}
 
 // ------------------------------------------------------------ caméra
 function stopCamera() {
@@ -405,7 +454,7 @@ function grabFrame(max) {
 function pixels(canvas) { return canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height); }
 
 // ------------------------------------------------------------ traduction écrite sur la vidéo
-const live = { prev: null, lastText: "", seen: "", seenCount: 0, shownAt: 0, boxes: false };
+const live = { prev: null, lastText: "", seen: "", seenCount: 0, shownAt: 0, boxes: false, last: null };
 const ov = el.overlay.getContext("2d");
 function clearOverlay() {
   if (!live.boxes) return;
@@ -431,6 +480,8 @@ function drawOverlay(frame, lines) {
   ov.clearRect(0, 0, W, H);
   const b = videoBox(), g = frame.geom;
   live.boxes = lines.length > 0;
+  live.last = { frame, lines };          // pour redessiner quand la traduction neuronale arrive
+  lines.forEach((l) => requestTranslation(lineText(l)));
   if (!b || !g) return;
   const kx = g.sw / frame.width, ky = g.sh / frame.height;
   const X = (x) => b.x + (g.sx + x * kx) * b.s, Y = (y) => b.y + (g.sy + y * ky) * b.s;
@@ -454,7 +505,7 @@ function drawOverlay(frame, lines) {
     const py = fitText(l.info.pinyin, maxW - 16);
     const pw = ov.measureText(py).width;
     ov.font = `700 ${fs}px Georgia, serif`;
-    const tr = fitText(l.info.gloss, maxW - 16);
+    const tr = fitText(l.info.sentence || l.info.gloss, maxW - 16);
     const tw = ov.measureText(tr).width;
     const bw = Math.max(pw, tw) + 16, bh = fs * 2.35 + 10;
     let bx = Math.min(Math.max(8, l.lx0 - 3), W - bw - 8);
@@ -558,6 +609,7 @@ function renderResult(r) {
   state.shown = r;
   const allWords = new Map();
   const segs = r.lines.map((line, li) => {
+    requestTranslation(lineText(line));
     const info = lineInfo(line);
     [...info.extras, ...info.words].forEach((w) => { if (w.meaning && !allWords.has(w.word)) allWords.set(w.word, w); });
     const open = state.openAlt && state.openAlt.id === r.id && state.openAlt.line === li ? state.openAlt.ch : -1;
@@ -571,7 +623,8 @@ function renderResult(r) {
         <div class="hanzi ${sizeClass(line.chars.length)}">${chars}</div>
         ${alt}
         ${info.pinyin ? `<p class="pinyin">${esc(info.pinyin)}</p>` : ""}
-        ${info.gloss ? `<p class="tr">${esc(info.gloss)}</p>` : ""}
+        ${info.sentence ? `<p class="tr">${esc(info.sentence)}</p>` : mt.ready ? '<p class="tr wait">Traduction…</p>' : ""}
+        ${info.gloss ? `<p class="${info.sentence || mt.ready ? "gloss" : "tr"}">${info.sentence || mt.ready ? "<span>Mot à mot :</span> " : ""}${esc(info.gloss)}</p>` : ""}
         ${zhVoice ? `<div class="seg-actions"><button type="button" data-speak="${li}">Écouter</button></div>` : ""}
       </div>`;
   }).join("");
@@ -581,11 +634,12 @@ function renderResult(r) {
     </dl></div>` : "";
   const anyLow = r.lines.some((l) => l.chars.some((c) => c.p < 0.6));
   el.current.innerHTML = `
-    <p class="reading-meta">Lu à ${esc(timeLabel(r.at))} · traduction mot à mot</p>
+    <p class="reading-meta">Lu à ${esc(timeLabel(r.at))}${mt.ready ? " · traduction par notre réseau, à vérifier avec le mot à mot" : " · traduction mot à mot"}</p>
     ${segs}
     ${vocab}
     ${anyLow ? '<p class="note">Les caractères soulignés en pointillés sont incertains : touchez-les pour choisir une autre lecture.</p>' : ""}`;
-  el.voletTitle.textContent = r.lines.map(lineText).join(" ") + " — " + (lineInfo(r.lines[0]).gloss || "");
+  const first = lineInfo(r.lines[0]);
+  el.voletTitle.textContent = r.lines.map(lineText).join(" ") + " — " + (first.sentence || first.gloss || "");
   markHistory();
 }
 
@@ -688,7 +742,7 @@ async function liveLoop() {
       setStatus("wait", "Visez des caractères chinois");
       continue;
     }
-    const frame = grabFrame(1024);
+    const frame = grabFrame(1440);
     if (!frame) continue;
     let res;
     try {
