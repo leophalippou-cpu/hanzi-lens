@@ -1,0 +1,16 @@
+{
+  "name": "Hanzi Lens",
+  "short_name": "Hanzi Lens",
+  "description": "Lit et traduit les caractères chinois vus par la caméra, avec un réseau de neurones fait maison.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#e9dfc8",
+  "theme_color": "#e9dfc8",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

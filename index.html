@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e9dfc8">
+<title>Hanzi Lens</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+/* Interface « papier et encre » : un seul thème clair, lisible dehors, sans fioritures.
+   Téléphone : caméra en plein écran, volet de traduction en bas. Ordinateur : volet à droite. */
+:root {
+  color-scheme: light;
+  --paper: #e9dfc8;      /* fond */
+  --sheet: #f4eedf;      /* volet, cartes */
+  --ink: #2a241d;        /* texte */
+  --ink-soft: #6e6152;   /* texte secondaire */
+  --rule: #b9a88a;       /* filets */
+  --seal: #a8322a;       /* rouge vermillon : sceau, cadres */
+  --ochre: #a86f12;      /* incertain */
+  --dark: #1c1915;       /* fond de la caméra */
+  --f-txt: Georgia, "Times New Roman", serif;
+  --f-han: "KaiTi", "STKaiti", "Kaiti SC", "SimSun", "Songti SC", "Noto Serif CJK SC", serif;
+  --f-mono: Consolas, ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+  background: var(--paper); color: var(--ink); font: 16px/1.45 var(--f-txt);
+}
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+/* ---------- en-tête */
+.top {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  border-bottom: 2px solid var(--ink);
+}
+.seal { display: grid; place-items: center; width: 30px; height: 30px; background: var(--seal); color: #f4eedf; font: 700 19px/1 var(--f-han); }
+.name { font-size: 19px; font-weight: 700; letter-spacing: .02em; }
+.top .spacer { flex: 1; }
+.txt-btn {
+  border: 1.5px solid var(--ink); background: var(--sheet); padding: 5px 12px; cursor: pointer; font-size: 15px;
+}
+.txt-btn:active { background: var(--paper); }
+
+/* ---------- disposition */
+.app { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+@media (min-width: 900px) {
+  .app { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr) 400px; }
+}
+
+/* ---------- caméra */
+.cam { position: relative; overflow: hidden; background: var(--dark); min-height: 0; cursor: pointer; touch-action: manipulation; }
+.cam video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.frame { position: absolute; border: 2px dashed rgba(244, 238, 223, .85); pointer-events: none; box-shadow: 0 0 0 9999px rgba(20, 17, 14, .45); }
+.chip {
+  position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); margin: 0;
+  padding: 4px 10px; background: rgba(244, 238, 223, .92); border: 1.5px solid var(--ink); font-size: 14px;
+}
+.chip[data-state="busy"]::before { content: "● "; color: var(--ochre); }
+.chip[data-state="error"]::before { content: "● "; color: var(--seal); }
+.cam-off {
+  position: absolute; inset: 0; display: grid; place-content: center; gap: 12px; padding: 24px;
+  text-align: center; color: #f4eedf; cursor: default;
+}
+.cam-off p { margin: 0; max-width: 46ch; }
+
+/* ---------- volet de traduction */
+.volet { display: flex; flex-direction: column; min-height: 0; background: var(--sheet); border-top: 2px solid var(--ink); max-height: 48dvh; }
+.volet.closed { max-height: none; }
+.volet.closed .volet-body { display: none; }
+@media (min-width: 900px) {
+  .volet { max-height: none; border-top: 0; border-left: 2px solid var(--ink); }
+  .volet-handle { display: none !important; }
+  .volet.closed .volet-body { display: block; }
+}
+.volet-handle {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; flex: none;
+  padding: 8px 14px; border: 0; border-bottom: 1px solid var(--rule); background: transparent; cursor: pointer; text-align: left;
+}
+.volet-handle .title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.volet-handle .arrow { flex: none; font-size: 13px; color: var(--ink-soft); }
+.volet-body { overflow-y: auto; padding: 4px 14px max(14px, env(safe-area-inset-bottom)); }
+
+.intro { margin: 10px 0; color: var(--ink-soft); }
+.intro b { color: var(--ink); }
+.reading-meta { margin: 10px 0 0; font-size: 13px; color: var(--ink-soft); }
+.seg { padding: 10px 0 12px; border-bottom: 1px solid var(--rule); }
+.hanzi { display: flex; flex-wrap: wrap; gap: 2px 6px; }
+.hz {
+  min-width: 1.1em; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: transparent;
+  cursor: pointer; font: 700 38px/1.25 var(--f-han); color: var(--ink);
+}
+.hanzi.m .hz { font-size: 28px; }
+.hanzi.s .hz { font-size: 21px; }
+.hz.low { border-bottom: 2px dotted var(--ochre); }
+.hz[aria-expanded="true"] { background: #e3d6b8; }
+.alts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; font-size: 14px; color: var(--ink-soft); }
+.alt { border: 1.5px solid var(--ink); background: var(--sheet); padding: 0 10px; cursor: pointer; }
+.alt b { font: 700 22px var(--f-han); color: var(--ink); }
+.alt small { font-size: 12px; margin-left: 4px; }
+.alt.on { background: #e3d6b8; }
+.pinyin { margin: 2px 0 0; font-style: italic; color: var(--ink-soft); }
+.tr { margin: 4px 0 0; font-size: 18px; font-weight: 700; }
+.seg-actions { margin-top: 6px; }
+.seg-actions button { border: 0; background: none; padding: 0; color: var(--seal); text-decoration: underline; cursor: pointer; font-size: 14px; }
+.vocab { margin: 12px 0 4px; }
+.vocab h3, .history h3 { margin: 0 0 6px; font-size: 13px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
+.vocab dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; }
+.vocab dt { font: 700 20px/1.3 var(--f-han); }
+.vocab dd { margin: 0; font-size: 14px; }
+.vocab dd i { color: var(--ink-soft); }
+.note { margin: 8px 0; font-size: 14px; color: var(--ink-soft); }
+.error { margin: 10px 0; padding: 8px 10px; border: 1.5px solid var(--seal); color: var(--seal); }
+
+.history { margin: 16px 0 4px; }
+.history-head { display: flex; justify-content: space-between; align-items: baseline; }
+.history ol { list-style: none; margin: 0; padding: 0; }
+.hist-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; width: 100%; padding: 6px 0;
+  border: 0; border-bottom: 1px dotted var(--rule); background: none; cursor: pointer; text-align: left;
+}
+.hist-hz { font: 700 18px var(--f-han); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-tr { grid-column: 1; font-size: 13px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-time { grid-row: 1; grid-column: 2; font-size: 12px; color: var(--ink-soft); }
+.hist-item[aria-current="true"] .hist-hz { color: var(--seal); }
+.link-btn { border: 0; background: none; padding: 0; color: var(--seal); text-decoration: underline; cursor: pointer; font-size: 13px; }
+
+/* ---------- réglages */
+dialog {
+  width: min(520px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0;
+  border: 2px solid var(--ink); background: var(--sheet); color: var(--ink);
+}
+dialog::backdrop { background: rgba(28, 25, 21, .55); }
+.sheet { display: grid; gap: 16px; padding: 16px; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; }
+.sheet-head h2 { margin: 0; font-size: 20px; }
+fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 8px; min-width: 0; }
+legend { padding: 0; margin-bottom: 6px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
+.check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.check input { margin-top: 4px; accent-color: var(--seal); width: 18px; height: 18px; }
+.radios { display: flex; border: 1.5px solid var(--ink); }
+.radios label { flex: 1; position: relative; }
+.radios input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.radios span { display: block; text-align: center; padding: 6px 4px; font-size: 15px; }
+.radios label + label span { border-left: 1.5px solid var(--ink); }
+.radios input:checked + span { background: var(--ink); color: var(--sheet); }
+.radios input:focus-visible + span { outline: 2px solid var(--seal); outline-offset: -4px; }
+.select { border: 1.5px solid var(--ink); background: var(--sheet); padding: 5px 8px; max-width: 100%; }
+.help { margin: 0; font-size: 14px; color: var(--ink-soft); }
+.facts { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 14px; }
+.facts b { font-weight: 700; }
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="seal" aria-hidden="true">汉</span>
+  <span class="name">Hanzi Lens</span>
+  <span class="spacer"></span>
+  <button class="txt-btn" id="settingsBtn" type="button">Réglages</button>
+</header>
+
+<main class="app">
+  <section class="cam" id="viewport" aria-label="Caméra — touchez pour lire tout de suite">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas class="overlay" id="overlay" aria-hidden="true"></canvas>
+    <div class="frame" id="frame" hidden></div>
+    <p class="chip" id="statusChip" data-state="wait" role="status"><span id="statusText">Démarrage de la caméra…</span></p>
+    <div class="cam-off" id="camOff" hidden>
+      <p id="camOffMsg">La caméra n'est pas disponible.</p>
+      <div><button class="txt-btn" id="retryCam" type="button">Réessayer la caméra</button></div>
+    </div>
+  </section>
+
+  <aside class="volet" id="volet" aria-live="polite">
+    <button class="volet-handle" id="voletToggle" type="button" aria-expanded="true" aria-controls="voletBody">
+      <span class="title" id="voletTitle">Traduction</span><span class="arrow" id="voletArrow">▼ réduire</span>
+    </button>
+    <div class="volet-body" id="voletBody">
+      <div id="current"></div>
+      <div class="history" id="history" hidden>
+        <div class="history-head"><h3>Déjà lus</h3><button class="link-btn" id="clearHistory" type="button">Effacer</button></div>
+        <ol id="historyList"></ol>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<dialog id="settings" aria-labelledby="settingsTitle">
+  <form method="dialog" class="sheet">
+    <div class="sheet-head">
+      <h2 id="settingsTitle">Réglages</h2>
+      <button class="txt-btn" value="close">Fermer</button>
+    </div>
+
+    <fieldset>
+      <legend>Lecture</legend>
+      <label class="check"><input type="checkbox" id="autoToggle" checked><span>Détection automatique : traduire dès que des caractères sont vus</span></label>
+      <label class="check"><input type="checkbox" id="frameToggle"><span>Ne lire que le centre de l'image</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Sensibilité</legend>
+      <div class="radios">
+        <label><input type="radio" name="sensitivity" value="strict"><span>Prudente</span></label>
+        <label><input type="radio" name="sensitivity" value="normal"><span>Normale</span></label>
+        <label><input type="radio" name="sensitivity" value="loose"><span>Large</span></label>
+      </div>
+      <p class="help">Prudente : moins de fausses alertes. Large : réagit aussi à une écriture moins nette.</p>
+    </fieldset>
+
+    <fieldset id="cameraField" hidden>
+      <legend>Caméra</legend>
+      <select class="select" id="cameraSelect" aria-label="Choisir la caméra"></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Image enregistrée</legend>
+      <div><label class="txt-btn" for="fileInput" style="display:inline-block">Lire une image…</label><input type="file" id="fileInput" accept="image/*" hidden></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Moteur maison</legend>
+      <ul class="facts">
+        <li><b>Reconnaissance :</b> réseau de neurones entraîné pour ce projet, exécuté dans la page par notre propre code.</li>
+        <li><b>Calcul :</b> <span id="factBackend">…</span></li>
+        <li><b>Caractères :</b> <span id="factChars">…</span></li>
+        <li><b>Précision mesurée :</b> <span id="factAcc">…</span></li>
+        <li><b>Traduction :</b> dictionnaire hors ligne, mot à mot.</li>
+      </ul>
+      <p class="help">Données : écriture manuscrite CASIA-HWDB1.1 (Institut d'automatisation de l'Académie chinoise des sciences, usage non commercial ; Liu et al., ICDAR 2011), polices chinoises de Windows, dictionnaires CFDICT (chine.in, CC BY-SA 3.0) et CC-CEDICT (MDBG, CC BY-SA 4.0).</p>
+    </fieldset>
+  </form>
+</dialog>
+
+<script type="module">
+import { Reader } from "./hanzi-reader.js";
+import { loadDict, analyze } from "./hanzi-dict.js";
+
+const CROP = { x: 0.15, y: 0.22, w: 0.70, h: 0.56 };
+const LEVELS = { strict: 0.85, normal: 0.7, loose: 0.55 };   // certitude exigée par caractère (détection auto)
+const SIMPLE = new Set([..."一二三十口丁工人八卜"]);         // caractères qui ressemblent à de simples formes
+const SHOW = 0.3;                                           // en dessous : caractère ignoré
+const KEEP_OVERLAY = 1500;                                  // la traduction reste affichée 1,5 s après le dernier repérage
+const $ = (s) => document.querySelector(s);
+
+const el = {
+  video: $("#video"), viewport: $("#viewport"), frame: $("#frame"), overlay: $("#overlay"),
+  chip: $("#statusChip"), statusText: $("#statusText"), camOff: $("#camOff"), camOffMsg: $("#camOffMsg"), retryCam: $("#retryCam"),
+  volet: $("#volet"), voletToggle: $("#voletToggle"), voletTitle: $("#voletTitle"), voletArrow: $("#voletArrow"),
+  current: $("#current"), history: $("#history"), historyList: $("#historyList"), clearHistory: $("#clearHistory"),
+  settingsBtn: $("#settingsBtn"), settings: $("#settings"), autoToggle: $("#autoToggle"), frameToggle: $("#frameToggle"),
+  cameraField: $("#cameraField"), cameraSelect: $("#cameraSelect"), fileInput: $("#fileInput"),
+};
+
+const prefs = { sensitivity: "normal", live: true, frame: false, deviceId: "" };
+const state = { busy: false, stream: null, history: [], shown: null, reader: null, dict: null, ready: false, openAlt: null, wake: null };
+
+// ------------------------------------------------------------ outils
+function load(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } }
+function save(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* stockage indisponible */ } }
+function savePrefs() { save("hanzilens.prefs", prefs); }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function setStatus(kind, text) { el.chip.dataset.state = kind; el.statusText.textContent = text; }
+function timeLabel(ts) { return new Date(ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); }
+function pct(p) { return Math.round(p * 100) + " %"; }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+
+// ------------------------------------------------------------ moteur maison
+async function loadEngine() {
+  setStatus("busy", "Chargement du réseau de neurones…");
+  try {
+    const reader = new Reader("./models/");
+    const [dict] = await Promise.all([loadDict("./dict/zh.json"), reader.init()]);
+    Object.assign(state, { reader, dict, ready: true });
+    const m = reader.manifest;
+    $("#factBackend").textContent = reader.backend === "la carte graphique"
+      ? "sur la carte graphique de cet appareil (WebGPU)." : "sur le processeur, en parallèle sur plusieurs cœurs.";
+    $("#factChars").textContent = `${m.charset.length.toLocaleString("fr-FR")} caractères simplifiés courants, manuscrits ou imprimés.`;
+    $("#factAcc").textContent = m.accuracy
+      ? `${pct(m.accuracy.top1)} des caractères manuscrits de test reconnus du premier coup, ${pct(m.accuracy.top3)} parmi 3 propositions (${m.accuracy.n.toLocaleString("fr-FR")} images de 60 personnes jamais vues).`
+      : "non mesurée";
+    if (!state.shown) renderIntro();
+    setStatus("ready", state.stream ? readyMessage() : "Prêt");
+  } catch (err) {
+    console.error(err);
+    setStatus("error", "Moteur indisponible");
+    renderError(LOCAL && err instanceof TypeError
+      ? "Le serveur Hanzi Lens est arrêté. Double-cliquez sur Lancer.cmd, puis rechargez cette page."
+      : "Les fichiers du moteur n'ont pas pu être chargés. Vérifiez la connexion internet (la première ouverture télécharge environ 15 Mo), puis rechargez la page.");
+  }
+}
+function lineText(line) { return line.chars.map((c) => c.ch).join(""); }
+function lineInfo(line) { return state.dict ? analyze(state.dict, lineText(line)) : { words: [], extras: [], pinyin: "", gloss: "" }; }
+
+// ------------------------------------------------------------ caméra
+function stopCamera() {
+  if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
+  state.stream = null;
+}
+async function startCamera(deviceId) {
+  stopCamera();
+  el.camOff.hidden = true;
+  setStatus("wait", "Démarrage de la caméra…");
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return cameraFailed("Ce navigateur ne donne pas accès à la caméra. Ouvrez la page dans Chrome, Edge, Safari ou Firefox.");
+  }
+  // Sur téléphone : la caméra arrière par défaut.
+  const video = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  if (deviceId) video.deviceId = { exact: deviceId };
+  else video.facingMode = { ideal: "environment" };
+  try {
+    state.stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+  } catch (err) {
+    if (deviceId && (err.name === "OverconstrainedError" || err.name === "NotFoundError")) return startCamera("");
+    const msg = {
+      NotAllowedError: "La caméra est bloquée. Autorisez-la pour ce site dans le navigateur (icône à gauche de l'adresse), puis touchez « Réessayer ». Sur ordinateur, vérifiez aussi Windows : Paramètres › Confidentialité et sécurité › Caméra.",
+      NotFoundError: "Aucune caméra n'a été détectée sur cet appareil.",
+      NotReadableError: "La caméra est déjà utilisée par une autre application (Teams, Zoom, l'app Caméra…). Fermez-la puis réessayez.",
+    }[err.name] || `La caméra n'a pas pu démarrer (${err.name}).`;
+    return cameraFailed(msg);
+  }
+  el.video.srcObject = state.stream;
+  try { await el.video.play(); } catch { /* lecture auto bloquée : la vidéo démarrera au premier toucher */ }
+  const settings = state.stream.getVideoTracks()[0]?.getSettings?.() || {};
+  if (deviceId && settings.deviceId) { prefs.deviceId = settings.deviceId; savePrefs(); }
+  setStatus("ready", readyMessage());
+  listCameras(settings.deviceId);
+  keepAwake();
+}
+function cameraFailed(message) {
+  el.camOffMsg.textContent = message;
+  el.camOff.hidden = false;
+  setStatus("error", "Caméra indisponible");
+}
+async function listCameras(activeId) {
+  try {
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+    el.cameraSelect.innerHTML = cams.map((c, i) =>
+      `<option value="${esc(c.deviceId)}"${c.deviceId === activeId ? " selected" : ""}>${esc(c.label || "Caméra " + (i + 1))}</option>`).join("");
+    el.cameraField.hidden = cams.length < 2;
+  } catch { el.cameraField.hidden = true; }
+}
+// Garde l'écran allumé pendant qu'on vise (téléphone).
+async function keepAwake() {
+  try {
+    if ("wakeLock" in navigator && !state.wake && !document.hidden) {
+      state.wake = await navigator.wakeLock.request("screen");
+      state.wake.addEventListener("release", () => { state.wake = null; });
+    }
+  } catch { /* refusé : sans importance */ }
+}
+
+// ------------------------------------------------------------ géométrie
+// La vidéo remplit la zone (object-fit: cover) : une partie peut être rognée.
+function videoBox() {
+  const vw = el.video.videoWidth, vh = el.video.videoHeight;
+  const cw = el.viewport.clientWidth, ch = el.viewport.clientHeight;
+  if (!vw || !vh) return null;
+  const s = Math.max(cw / vw, ch / vh);
+  return { x: (cw - vw * s) / 2, y: (ch - vh * s) / 2, s, cw, ch, vw, vh };
+}
+// Zone de la vidéo à analyser : la partie visible à l'écran (et seulement le centre si « Cadre »).
+function sourceRect() {
+  const b = videoBox();
+  if (!b) return null;
+  let sx = Math.max(0, -b.x / b.s), sy = Math.max(0, -b.y / b.s);
+  let sw = Math.min(b.vw - sx, b.cw / b.s), sh = Math.min(b.vh - sy, b.ch / b.s);
+  if (prefs.frame) { sx += sw * CROP.x; sy += sh * CROP.y; sw *= CROP.w; sh *= CROP.h; }
+  return { sx, sy, sw, sh };
+}
+function layoutFrame() {
+  const b = videoBox(), r = sourceRect();
+  el.frame.hidden = !prefs.frame || !b || !r;
+  if (el.frame.hidden) return;
+  Object.assign(el.frame.style, {
+    left: b.x + r.sx * b.s + "px", top: b.y + r.sy * b.s + "px", width: r.sw * b.s + "px", height: r.sh * b.s + "px",
+  });
+}
+function toCanvas(src, sx, sy, sw, sh, max) {
+  const s = Math.min(1, max / Math.max(sw, sh));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(sw * s));
+  c.height = Math.max(1, Math.round(sh * s));
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  return c;
+}
+function grabFrame(max) {
+  const r = sourceRect();
+  if (!r || !state.stream) return null;
+  const c = toCanvas(el.video, r.sx, r.sy, r.sw, r.sh, max);
+  c.geom = r;
+  return c;
+}
+function pixels(canvas) { return canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height); }
+
+// ------------------------------------------------------------ traduction écrite sur la vidéo
+const live = { prev: null, lastText: "", seen: "", seenCount: 0, shownAt: 0, boxes: false };
+const ov = el.overlay.getContext("2d");
+function clearOverlay() {
+  if (!live.boxes) return;
+  ov.setTransform(1, 0, 0, 1, 0, 0);
+  ov.clearRect(0, 0, el.overlay.width, el.overlay.height);
+  live.boxes = false;
+}
+function fitText(text, maxW) {
+  if (ov.measureText(text).width <= maxW) return text;
+  let t = text;
+  while (t.length > 1 && ov.measureText(t + "…").width > maxW) t = t.slice(0, -1);
+  return t + "…";
+}
+// Encadre chaque caractère et écrit, sous la ligne, le pinyin et la traduction mot à mot.
+function drawOverlay(frame, lines) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = el.viewport.clientWidth, H = el.viewport.clientHeight;
+  if (el.overlay.width !== Math.round(W * dpr) || el.overlay.height !== Math.round(H * dpr)) {
+    el.overlay.width = Math.round(W * dpr);
+    el.overlay.height = Math.round(H * dpr);
+  }
+  ov.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ov.clearRect(0, 0, W, H);
+  const b = videoBox(), g = frame.geom;
+  live.boxes = lines.length > 0;
+  if (!b || !g) return;
+  const kx = g.sw / frame.width, ky = g.sh / frame.height;
+  const X = (x) => b.x + (g.sx + x * kx) * b.s, Y = (y) => b.y + (g.sy + y * ky) * b.s;
+  const labels = [];
+  for (const line of lines) {
+    let lx0 = Infinity, ly0 = Infinity, lx1 = -Infinity, ly1 = -Infinity;
+    for (const c of line.chars) {
+      const x0 = X(c.box.x0), y0 = Y(c.box.y0), x1 = X(c.box.x1 + 1), y1 = Y(c.box.y1 + 1);
+      ov.lineWidth = 2.5;
+      ov.strokeStyle = c.p >= 0.6 ? "#c8392e" : "#d99a2b";
+      ov.strokeRect(x0 - 3, y0 - 3, x1 - x0 + 6, y1 - y0 + 6);
+      lx0 = Math.min(lx0, x0); ly0 = Math.min(ly0, y0); lx1 = Math.max(lx1, x1); ly1 = Math.max(ly1, y1);
+    }
+    labels.push({ info: lineInfo(line), lx0, ly0, lx1, ly1 });
+  }
+  for (const l of labels) {
+    if (!l.info.gloss) continue;
+    const fs = Math.max(14, Math.min(22, (l.ly1 - l.ly0) * 0.32));
+    const maxW = Math.min(W - 16, Math.max(220, (l.lx1 - l.lx0) * 1.6));
+    ov.font = `italic ${Math.round(fs * 0.85)}px Georgia, serif`;
+    const py = fitText(l.info.pinyin, maxW - 16);
+    const pw = ov.measureText(py).width;
+    ov.font = `700 ${fs}px Georgia, serif`;
+    const tr = fitText(l.info.gloss, maxW - 16);
+    const tw = ov.measureText(tr).width;
+    const bw = Math.max(pw, tw) + 16, bh = fs * 2.35 + 10;
+    let bx = Math.min(Math.max(8, l.lx0 - 3), W - bw - 8);
+    let by = l.ly1 + 8;
+    if (by + bh > H - 8) by = Math.max(8, l.ly0 - bh - 8);   // pas de place dessous : au-dessus
+    ov.fillStyle = "rgba(244, 238, 223, 0.95)";
+    ov.fillRect(bx, by, bw, bh);
+    ov.lineWidth = 1.5;
+    ov.strokeStyle = "#2a241d";
+    ov.strokeRect(bx, by, bw, bh);
+    ov.textBaseline = "top";
+    ov.fillStyle = "#6e6152";
+    ov.font = `italic ${Math.round(fs * 0.85)}px Georgia, serif`;
+    ov.fillText(py, bx + 8, by + 5);
+    ov.fillStyle = "#2a241d";
+    ov.font = `700 ${fs}px Georgia, serif`;
+    ov.fillText(tr, bx + 8, by + 5 + fs * 1.1);
+  }
+}
+
+// ------------------------------------------------------------ lecture
+function keepLines(lines, min) {
+  return lines.map((l) => ({ chars: l.chars.filter((c) => c.p >= min) })).filter((l) => l.chars.length);
+}
+// Lecture demandée (toucher l'image, Espace, image enregistrée) : on montre aussi les caractères incertains.
+async function read(source) {
+  if (state.busy) return;
+  if (!state.ready) { setStatus("wait", "Le réseau de neurones se charge encore…"); return; }
+  const canvas = source || grabFrame(1280);
+  if (!canvas) return;
+  state.busy = true;
+  setStatus("busy", "Lecture…");
+  try {
+    const res = await state.reader.read(pixels(canvas));
+    const lines = keepLines(res.lines, SHOW);
+    if (canvas.geom) { drawOverlay(canvas, lines); live.shownAt = Date.now(); }
+    if (!lines.length) {
+      setStatus("ready", "Aucun caractère chinois reconnu ici");
+      if (source) renderNote("Aucun caractère chinois reconnu dans cette image.");
+      return;
+    }
+    showResult(lines);
+  } catch (err) {
+    console.error(err);
+    setStatus("error", "Lecture impossible : " + err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+function showResult(lines) {
+  const at = Date.now();
+  const r = { id: at.toString(36), at, lines };
+  state.openAlt = null;
+  renderResult(r);
+  addHistory(r);
+  const n = lines.reduce((s, l) => s + l.chars.length, 0);
+  setStatus("ready", `${n} caractère${n > 1 ? "s" : ""} lu${n > 1 ? "s" : ""}`);
+}
+
+// ------------------------------------------------------------ voix
+let zhVoice = null;
+function pickVoice() {
+  if (!("speechSynthesis" in window)) return;
+  const voices = speechSynthesis.getVoices();
+  zhVoice = voices.find((v) => /^zh[-_](CN|Hans)/i.test(v.lang)) || voices.find((v) => /^(zh|cmn)/i.test(v.lang)) || null;
+}
+function speak(text) {
+  if (!zhVoice) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.voice = zhVoice; u.lang = zhVoice.lang; u.rate = 0.85;
+  speechSynthesis.speak(u);
+}
+
+// ------------------------------------------------------------ volet
+function setVolet(open) {
+  el.volet.classList.toggle("closed", !open);
+  el.voletToggle.setAttribute("aria-expanded", String(open));
+  el.voletArrow.textContent = open ? "▼ réduire" : "▲ ouvrir";
+  requestAnimationFrame(() => { layoutFrame(); });
+}
+el.voletToggle.addEventListener("click", () => setVolet(el.volet.classList.contains("closed")));
+
+function sizeClass(n) { return n <= 6 ? "" : n <= 12 ? "m" : "s"; }
+
+function renderIntro() {
+  state.shown = null;
+  el.voletTitle.textContent = "Traduction";
+  el.current.innerHTML = `
+    <p class="intro"><b>Visez des caractères chinois</b> avec la caméra et tenez-la immobile une seconde : chaque caractère est encadré en rouge et la traduction s'écrit dessous. Elle s'affiche aussi ici.</p>
+    <p class="intro">Touchez l'image pour lire tout de suite. Touchez un caractère ci-dessous pour voir les autres lectures possibles.</p>`;
+}
+function renderNote(text) {
+  el.current.innerHTML = `<p class="note">${esc(text)}</p>`;
+}
+function renderError(text) {
+  el.current.innerHTML = `<p class="error">${esc(text)}</p>`;
+}
+
+function renderResult(r) {
+  state.shown = r;
+  const allWords = new Map();
+  const segs = r.lines.map((line, li) => {
+    const info = lineInfo(line);
+    [...info.extras, ...info.words].forEach((w) => { if (w.meaning && !allWords.has(w.word)) allWords.set(w.word, w); });
+    const open = state.openAlt && state.openAlt.id === r.id && state.openAlt.line === li ? state.openAlt.ch : -1;
+    const chars = line.chars.map((c, ci) => `<button class="hz${c.p < 0.6 ? " low" : ""}" type="button" lang="zh"
+        data-line="${li}" data-ch="${ci}" aria-expanded="${open === ci}" title="Sûr à ${pct(c.p)}">${esc(c.ch)}</button>`).join("");
+    const alt = open >= 0 && line.chars[open] ? `<div class="alts">Autres lectures :
+        ${line.chars[open].alts.map((a, ai) => `<button class="alt${a.ch === line.chars[open].ch ? " on" : ""}" type="button" data-line="${li}" data-ch="${open}" data-alt="${ai}"><b lang="zh">${esc(a.ch)}</b><small>${pct(a.p)}</small></button>`).join("")}
+      </div>` : "";
+    return `
+      <div class="seg">
+        <div class="hanzi ${sizeClass(line.chars.length)}">${chars}</div>
+        ${alt}
+        ${info.pinyin ? `<p class="pinyin">${esc(info.pinyin)}</p>` : ""}
+        ${info.gloss ? `<p class="tr">${esc(info.gloss)}</p>` : ""}
+        ${zhVoice ? `<div class="seg-actions"><button type="button" data-speak="${li}">Écouter</button></div>` : ""}
+      </div>`;
+  }).join("");
+  const words = [...allWords.values()];
+  const vocab = words.length ? `<div class="vocab"><h3>Vocabulaire</h3><dl>
+      ${words.map((w) => `<dt lang="zh">${esc(w.word)}</dt><dd><i>${esc(w.pinyin)}</i> — ${esc(w.meaning)}${w.lang === "en" ? " <i>(anglais)</i>" : ""}</dd>`).join("")}
+    </dl></div>` : "";
+  const anyLow = r.lines.some((l) => l.chars.some((c) => c.p < 0.6));
+  el.current.innerHTML = `
+    <p class="reading-meta">Lu à ${esc(timeLabel(r.at))} · traduction mot à mot</p>
+    ${segs}
+    ${vocab}
+    ${anyLow ? '<p class="note">Les caractères soulignés en pointillés sont incertains : touchez-les pour choisir une autre lecture.</p>' : ""}`;
+  el.voletTitle.textContent = r.lines.map(lineText).join(" ") + " — " + (lineInfo(r.lines[0]).gloss || "");
+  markHistory();
+}
+
+el.current.addEventListener("click", (e) => {
+  const r = state.shown;
+  if (!r) return;
+  const alt = e.target.closest("[data-alt]");
+  if (alt) {
+    const c = r.lines[Number(alt.dataset.line)].chars[Number(alt.dataset.ch)];
+    const a = c.alts[Number(alt.dataset.alt)];
+    c.ch = a.ch; c.p = Math.max(a.p, 0.6);
+    state.openAlt = null;
+    renderResult(r);
+    persistHistory(); renderHistory();
+    return;
+  }
+  const hz = e.target.closest(".hz");
+  if (hz) {
+    const pos = { id: r.id, line: Number(hz.dataset.line), ch: Number(hz.dataset.ch) };
+    const same = state.openAlt && state.openAlt.id === pos.id && state.openAlt.line === pos.line && state.openAlt.ch === pos.ch;
+    state.openAlt = same ? null : pos;
+    renderResult(r);
+    return;
+  }
+  const sp = e.target.closest("[data-speak]");
+  if (sp) speak(lineText(r.lines[Number(sp.dataset.speak)]));
+});
+
+// ------------------------------------------------------------ déjà lus (texte seulement, aucune image gardée)
+function addHistory(r) {
+  state.history = [r, ...state.history.filter((h) => h.id !== r.id)].slice(0, 30);
+  persistHistory();
+  renderHistory();
+}
+function persistHistory() { save("hanzilens.history3", state.history); }
+function renderHistory() {
+  el.history.hidden = state.history.length === 0;
+  el.historyList.innerHTML = state.history.map((h) => `<li><button class="hist-item" type="button" data-id="${esc(h.id)}">
+      <span class="hist-hz" lang="zh">${esc(h.lines.map(lineText).join(" "))}</span>
+      <span class="hist-time">${esc(timeLabel(h.at))}</span>
+      <span class="hist-tr">${esc(h.lines.length ? lineInfo(h.lines[0]).gloss : "")}</span>
+    </button></li>`).join("");
+  markHistory();
+}
+function markHistory() {
+  el.historyList.querySelectorAll(".hist-item").forEach((b) => b.setAttribute("aria-current", String(b.dataset.id === state.shown?.id)));
+}
+el.historyList.addEventListener("click", (e) => {
+  const b = e.target.closest(".hist-item");
+  const r = b && state.history.find((h) => h.id === b.dataset.id);
+  if (r) { state.openAlt = null; renderResult(r); $("#voletBody").scrollTop = 0; }
+});
+el.clearHistory.addEventListener("click", () => { state.history = []; persistHistory(); renderHistory(); });
+
+// ------------------------------------------------------------ détection automatique
+const probe = document.createElement("canvas");
+probe.width = 64; probe.height = 40;
+const probeCtx = probe.getContext("2d", { willReadFrequently: true });
+function sampleGray() {
+  const r = sourceRect();
+  if (!r) return null;
+  probeCtx.drawImage(el.video, r.sx, r.sy, r.sw, r.sh, 0, 0, probe.width, probe.height);
+  const d = probeCtx.getImageData(0, 0, probe.width, probe.height).data;
+  const g = new Uint8Array(probe.width * probe.height);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = (d[i] * 3 + d[i + 1] * 6 + d[i + 2]) / 10;
+  return g;
+}
+function meanDiff(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; }
+function contrast(a) { let m = 0; for (const v of a) m += v; m /= a.length; let s = 0; for (const v of a) s += (v - m) ** 2; return Math.sqrt(s / a.length); }
+// Vrai si deux textes partagent au moins 60 % de leurs caractères (même texte vu deux fois).
+function sameText(a, b) {
+  if (!a || !b) return false;
+  const pool = new Map();
+  for (const ch of b) pool.set(ch, (pool.get(ch) || 0) + 1);
+  let common = 0;
+  for (const ch of a) { const n = pool.get(ch); if (n) { common++; pool.set(ch, n - 1); } }
+  return common / Math.max(a.length, b.length) >= 0.6;
+}
+function fadeOverlay() { if (live.boxes && Date.now() - live.shownAt > KEEP_OVERLAY) clearOverlay(); }
+
+async function liveLoop() {
+  for (;;) {
+    await sleep(250);
+    if (!prefs.live || !state.stream || !state.ready || document.hidden || el.settings.open) { fadeOverlay(); continue; }
+    if (state.busy) continue;
+    const g = sampleGray();
+    if (!g) continue;
+    // Seuil tolérant : un téléphone tenu à la main bouge toujours un peu.
+    const moving = Boolean(live.prev) && meanDiff(g, live.prev) > 12;
+    live.prev = g;
+    if (moving) {
+      live.seenCount = 0; clearOverlay();
+      setStatus("wait", "Tenez immobile…");
+      continue;
+    }
+    // Image presque uniforme (objectif masqué, mur blanc) : rien à lire. Une écriture fine sur une
+    // grande feuille reste peu contrastée en moyenne, d'où un seuil bas.
+    if (contrast(g) < 4) {
+      live.seenCount = 0; fadeOverlay();
+      setStatus("wait", "Visez des caractères chinois");
+      continue;
+    }
+    const frame = grabFrame(1024);
+    if (!frame) continue;
+    let res;
+    try {
+      res = await state.reader.read(pixels(frame));
+    } catch (err) {
+      console.error(err);
+      setStatus("error", "Erreur du lecteur : " + err.message);
+      await sleep(3000);
+      continue;
+    }
+    if (!prefs.live || state.busy) continue;
+    const min = LEVELS[prefs.sensitivity] || LEVELS.normal;
+    // Les lignes faites uniquement de caractères « géométriques » (一 = un trait, 口 = un rectangle…)
+    // sont trop souvent des bords de meubles ou des formes : ignorées en détection automatique.
+    const real = (lines) => lines.filter((l) => l.chars.some((c) => !SIMPLE.has(c.ch)));
+    const strong = real(keepLines(res.lines, min));
+    const nStrong = strong.reduce((s, l) => s + l.chars.length, 0);
+    const bigSingle = nStrong === 1 && strong[0].chars[0].p >= 0.97
+      && (strong[0].chars[0].box.y1 - strong[0].chars[0].box.y0) > 0.12 * Math.min(frame.width, frame.height);
+    if (nStrong < 2 && !bigSingle) {
+      live.seenCount = 0;
+      fadeOverlay();
+      setStatus("ready", "Aucun caractère chinois en vue");
+      continue;
+    }
+    const shown = real(keepLines(res.lines, SHOW));
+    drawOverlay(frame, shown);
+    live.shownAt = Date.now();
+    const text = strong.map(lineText).join("");
+    live.seenCount = sameText(text, live.seen) ? live.seenCount + 1 : 1;
+    live.seen = text;
+    if (live.seenCount < 2) { setStatus("busy", "Caractères repérés…"); continue; }
+    if (sameText(text, live.lastText)) { setStatus("ready", "Traduit — visez un autre texte"); continue; }
+    live.lastText = text;
+    showResult(shown);
+  }
+}
+
+// ------------------------------------------------------------ image enregistrée
+async function readFile(file) {
+  if (!file || !file.type.startsWith("image/")) return;
+  el.settings.close();
+  try {
+    const bmp = await createImageBitmap(file);
+    const c = toCanvas(bmp, 0, 0, bmp.width, bmp.height, 1280);
+    bmp.close?.();
+    read(c);
+  } catch {
+    renderError("Ce format d'image n'est pas pris en charge. Essayez une image JPEG ou PNG.");
+  }
+}
+el.fileInput.addEventListener("change", () => { readFile(el.fileInput.files[0]); el.fileInput.value = ""; });
+document.addEventListener("paste", (e) => {
+  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
+  if (item) { e.preventDefault(); readFile(item.getAsFile()); }
+});
+
+// ------------------------------------------------------------ réglages
+function readyMessage() {
+  if (!state.ready) return "Chargement du réseau de neurones…";
+  return prefs.live ? "Visez des caractères chinois" : "Touchez l'image pour lire";
+}
+el.settingsBtn.addEventListener("click", () => {
+  const input = document.querySelector(`input[name="sensitivity"][value="${prefs.sensitivity}"]`);
+  if (input) input.checked = true;
+  el.settings.showModal();
+});
+el.settings.addEventListener("click", (e) => { if (e.target === el.settings) el.settings.close(); });
+el.settings.addEventListener("change", (e) => {
+  if (e.target.name === "sensitivity") { prefs.sensitivity = e.target.value; savePrefs(); }
+});
+el.autoToggle.addEventListener("change", () => {
+  prefs.live = el.autoToggle.checked; savePrefs();
+  Object.assign(live, { prev: null, seenCount: 0 });
+  if (!prefs.live) clearOverlay();
+  if (state.stream) setStatus("ready", readyMessage());
+});
+el.frameToggle.addEventListener("change", () => { prefs.frame = el.frameToggle.checked; savePrefs(); clearOverlay(); layoutFrame(); });
+el.cameraSelect.addEventListener("change", () => { prefs.deviceId = el.cameraSelect.value; savePrefs(); startCamera(prefs.deviceId); });
+el.retryCam.addEventListener("click", (e) => { e.stopPropagation(); startCamera(prefs.deviceId); });
+
+// Toucher l'image (ou Espace) : lecture immédiate.
+el.viewport.addEventListener("click", (e) => {
+  if (!el.camOff.hidden || e.target.closest("button")) return;
+  el.video.play().catch(() => {});
+  read();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Space" || e.repeat || el.settings.open) return;
+  if (e.target.closest("input, select, textarea, button, label, [contenteditable]")) return;
+  e.preventDefault();
+  read();
+});
+el.video.addEventListener("loadedmetadata", layoutFrame);
+new ResizeObserver(() => { layoutFrame(); clearOverlay(); }).observe(el.viewport);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.stream) { el.video.play().catch(() => {}); keepAwake(); }
+});
+
+// ------------------------------------------------------------ démarrage
+(function init() {
+  Object.assign(prefs, load("hanzilens.prefs", {}));
+  if (!LEVELS[prefs.sensitivity]) prefs.sensitivity = "normal";
+  state.history = load("hanzilens.history3", []).filter((h) => h && h.id && Array.isArray(h.lines));
+  el.autoToggle.checked = prefs.live;
+  el.frameToggle.checked = prefs.frame;
+  pickVoice();
+  if ("speechSynthesis" in window) speechSynthesis.addEventListener?.("voiceschanged", () => { pickVoice(); if (state.shown) renderResult(state.shown); });
+  renderIntro();
+  renderHistory();
+  loadEngine();
+  startCamera(prefs.deviceId);
+  liveLoop();
+  // Hors de l'ordinateur (site en ligne) : l'app s'installe et marche ensuite sans connexion.
+  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("./sw.js").catch(() => {});
+})();
+</script>
+</body>
+</html>
