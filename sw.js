@@ -1,6 +1,6 @@
 // Service worker : garde une copie de l'app sur le téléphone pour qu'elle marche sans connexion
 // (dehors, devant une enseigne). Changer VERSION à chaque publication pour forcer la mise à jour.
-const VERSION = "hanzi-lens-2026-11-20b";
+const VERSION = "hanzi-lens-2026-11-23a";
 const FILES = [
   "./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png",
   "./hanzi-net.js", "./hanzi-segment.js", "./hanzi-reader.js", "./hanzi-gpu.js", "./hanzi-worker.js", "./hanzi-dict.js",

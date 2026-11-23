@@ -140,9 +140,12 @@ export function detok(m, tokens) {
 }
 
 // Recherche en faisceau : on garde les `beam` meilleures traductions partielles à chaque pas.
-export function translate(m, text, { beam = 4, alpha = 0.7, noRepeat = true } = {}) {
+export function translate(m, text, opts) { return translateScored(m, text, opts).text; }
+
+// Renvoie { text, logp } : logp = log-probabilité moyenne par morceau (plus c'est bas, moins c'est sûr).
+export function translateScored(m, text, { beam = 4, alpha = 0.7, noRepeat = true } = {}) {
   const ids = [...text].filter((c) => c.trim()).map((c) => m.src.get(c) ?? UNK).slice(0, 64);
-  if (!ids.length) return "";
+  if (!ids.length) return { text: "", logp: 0 };
   const mem = encode(m, ids);
   const cross = [];
   for (let l = 0; l < m.cfg.dec; l++) {
@@ -179,5 +182,12 @@ export function translate(m, text, { beam = 4, alpha = 0.7, noRepeat = true } = 
   }
   const pool = finished.length ? finished : beams;
   pool.sort((x, y) => score(y) - score(x));
-  return detok(m, pool[0].tokens);
+  const best = pool[0];
+  // Tiret de dialogue hérité des sous-titres : inutile ici.
+  const out = detok(m, best.tokens).replace(/^[-–—]\s*/, "");
+  return { text: out, logp: best.logp / Math.max(1, best.tokens.length + 1) };
 }
+
+// Mots qui ne doivent jamais apparaître dans une traduction (restes de pages web indésirables).
+const BAD = /(sexe?s?|sexy|sexuel\w*|porn\w*|xxx|escort\w*|[ée]rotique\w*|salope\w*|nichon\w*|chatte\w*|bites?|p[ée]nis|vagin\w*|masturb\w*|orgasm\w*|viagra|cialis|casino\w*|putes?|prostitu\w*)/i;
+export function isClean(text) { return !BAD.test(text); }

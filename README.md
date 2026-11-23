@@ -8,8 +8,13 @@ Tout est fait maison : un réseau de neurones convolutif entraîné pour ce proj
 
 Précision mesurée sur les 223 991 caractères manuscrits de test de CASIA-HWDB1.1 (60 personnes jamais vues à l'entraînement) : 94,3 % du premier coup, 98,5 % parmi les 3 propositions.
 
+## Traducteur neuronal
+
+Les phrases reconnues sont traduites par notre propre Transformer chinois → français (11 millions de paramètres), entraîné sur 9 millions de phrases traduites des corpus libres OPUS, et exécuté dans la page par notre code JavaScript. Le mot à mot du dictionnaire est affiché en dessous pour vérifier.
+
 ## Données et licences
 
 - Écriture manuscrite : CASIA-HWDB1.1, Institut d'automatisation de l'Académie chinoise des sciences. Usage de recherche et personnel, pas d'usage commercial. Référence : C.-L. Liu, F. Yin, D.-H. Wang, Q.-F. Wang, « CASIA Online and Offline Chinese Handwriting Databases », ICDAR 2011.
 - Texte imprimé : images générées avec les polices chinoises de Windows, seulement pour l'entraînement.
+- Phrases traduites : corpus OPUS (https://opus.nlpl.eu) — OpenSubtitles, CCMatrix, MultiParaCrawl, TED2020, NeuLab-TedTalks, News-Commentary, WikiMatrix, TICO-19 — chacun sous sa propre licence.
 - `dict/zh.json` est tiré de **CFDICT** (chinois-français, https://chine.in, CC BY-SA 3.0) et de **CC-CEDICT** (chinois-anglais, MDBG, https://www.mdbg.net, CC BY-SA 4.0) ; il est distribué sous la même licence CC BY-SA.

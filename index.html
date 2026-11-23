@@ -305,7 +305,20 @@ async function loadEngine() {
 function lineText(line) { return line.chars.map((c) => c.ch).join(""); }
 function lineInfo(line) {
   const info = state.dict ? analyze(state.dict, lineText(line)) : { words: [], extras: [], pinyin: "", gloss: "" };
-  info.sentence = mt.done.get(lineText(line)) || "";
+  // Un seul mot connu du dictionnaire (出口, 洗手间, 营业时间…) : son sens direct, plus fiable qu'une phrase.
+  const only = info.words.length === 1 && info.words[0].lang === "fr" && info.words[0].meaning ? info.words[0] : null;
+  if (only) {
+    const sense = only.meaning.split("; ").find((d) => !d.startsWith("(")) || only.meaning.split("; ")[0];
+    const clean = sense.replace(/\s*\([^)]*\)\s*$/, "") || sense;
+    info.sentence = clean.charAt(0).toUpperCase() + clean.slice(1);
+    info.weak = "";
+    info.fromDict = true;
+    return info;
+  }
+  // Traduction neuronale : sûre si sa log-probabilité moyenne dépasse MT_SURE, sinon « incertaine ».
+  const t = mt.done.get(lineText(line));
+  info.sentence = t && t.text && t.logp >= MT_SURE ? t.text : "";
+  info.weak = t && t.text && t.logp < MT_SURE ? t.text : "";
   return info;
 }
 
@@ -313,6 +326,7 @@ function lineInfo(line) {
 // Chargé après le lecteur, dans un travailleur à part : il traduit des phrases entières.
 // Tant qu'il n'est pas prêt (ou s'il manque), la traduction mot à mot du dictionnaire reste affichée.
 const mt = { worker: null, ready: false, done: new Map(), pending: new Set(), nextId: 1, jobs: new Map() };
+const MT_SURE = -1.7;
 async function loadTranslator() {
   try {
     const [manifest, weights] = await Promise.all([
@@ -326,12 +340,12 @@ async function loadTranslator() {
       w.postMessage({ type: "init", manifest, weights }, [weights]);
     });
     w.onmessage = (e) => {
-      const { id, text } = e.data;
+      const { id, text, logp } = e.data;
       const src = mt.jobs.get(id);
       mt.jobs.delete(id);
       mt.pending.delete(src);
       if (src == null) return;
-      mt.done.set(src, text);
+      mt.done.set(src, { text, logp });
       if (state.shown && state.shown.lines.some((l) => lineText(l) === src)) renderResult(state.shown);
       if (live.last && live.last.lines.some((l) => lineText(l) === src) && live.boxes) drawOverlay(live.last.frame, live.last.lines);
     };
@@ -344,6 +358,7 @@ async function loadTranslator() {
 }
 function requestTranslation(text) {
   if (!mt.ready || !text || mt.done.has(text) || mt.pending.has(text)) return;
+  if (state.dict && analyze(state.dict, text).words.length === 1 && state.dict[text]?.some((r) => r[1])) return; // mot du dictionnaire
   const id = mt.nextId++;
   mt.jobs.set(id, text);
   mt.pending.add(text);
@@ -623,7 +638,9 @@ function renderResult(r) {
         <div class="hanzi ${sizeClass(line.chars.length)}">${chars}</div>
         ${alt}
         ${info.pinyin ? `<p class="pinyin">${esc(info.pinyin)}</p>` : ""}
-        ${info.sentence ? `<p class="tr">${esc(info.sentence)}</p>` : mt.ready ? '<p class="tr wait">Traduction…</p>' : ""}
+        ${info.sentence ? `<p class="tr">${esc(info.sentence)}</p>`
+          : info.weak ? `<p class="gloss"><span>Traduction incertaine :</span> ${esc(info.weak)}</p>`
+          : mt.ready && !mt.done.has(lineText(line)) ? '<p class="tr wait">Traduction…</p>' : ""}
         ${info.gloss ? `<p class="${info.sentence || mt.ready ? "gloss" : "tr"}">${info.sentence || mt.ready ? "<span>Mot à mot :</span> " : ""}${esc(info.gloss)}</p>` : ""}
         ${zhVoice ? `<div class="seg-actions"><button type="button" data-speak="${li}">Écouter</button></div>` : ""}
       </div>`;
